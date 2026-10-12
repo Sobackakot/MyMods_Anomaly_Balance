@@ -1,0 +1,1166 @@
+--[[
+==============================================
+-- Tronex
+-- 2019/5/29
+-- Anomaly Treasure manager
+-- Based on CoC treasure manager
+==============================================
+--]]
+
+-- config
+ini_treasure = ini_file("items\\settings\\treasure_manager.ltx")
+local enable_debug = false
+local sfind = string.find
+
+-- Stash storage
+caches = {}
+local caches_count = 0
+local caches_blacklist = {}
+local caches_rare = {}
+local stash_expiration = {}
+
+-- Таблицы для прогрессивных шансов квестодателей
+local stash_chance_green = {}
+local stash_chance_purple = {}
+local stash_green_fails = {}
+
+-- Stats and Shuffle tables
+local stash_common = {
+	min_weight = 0,
+	max_weight = 0,
+	kind_val   = {},
+	tier_val   = {},
+	kind_list  = {},
+	tier_list  = {},
+}
+
+local stash_rare = {
+	min_weight = 0,
+	max_weight = 0,
+	kind_val   = {},
+	tier_val   = {},
+	kind_list  = {},
+	tier_list  = {},
+	
+	reward_bonus = {},
+	task_num = 7,
+	start_chance = 60,
+}
+
+stash_bonus = {}
+
+-- Item list
+local item_list = {}
+local dbg_items = {}
+
+-- Item properties
+local item_prop_table = { cond_r = {30,70} , cond_ct = "part" , cond_cr = {0.5,0.75,1} , ammo = math.random(10,30) }
+
+local stash_level_aliases = {
+	["jupiter_underground"]   = "jupiter",
+	["l03u_agr_underground"]  = "l03_agroprom",
+	["l04u_labx18"]           = "l04_darkvalley",
+	["l08u_brainlab"]         = "l08_yantar",
+	["l10u_bunker"]           = "l10_radar",
+	["l12u_control_monolith"] = "l12_stancia",
+	["l12u_sarcofag"]         = "l12_stancia",
+	["l13u_warlab"]           = "l13_generators",
+	["l06_rostok_demo"]       = "l06_rostok",
+}
+
+local stash_allowed_kinds = {
+	i_food = true,
+	i_drink = true,
+	i_medical = true,
+	w_ammo = true,
+	w_explosive = true,
+	i_repair = true,
+	i_part = true,
+	i_kit = true,
+	i_tool = true,
+}
+
+local stash_loot_tier_by_level = {
+	l01_escape = 1, k01_darkscape = 1, y04_pole = 1, k00_marsh = 1,
+	l02_garbage = 1, l03_agroprom = 1, l04_darkvalley = 1,
+	k02_trucks_cemetery = 2, l05_bar = 2, l06_rostok = 2,
+	l09_deadcity = 2, l08_yantar = 2,
+	l07_military = 3, l10_red_forest = 3, l10_limansk = 3, l10_radar = 3,
+	zaton = 4, jupiter = 4,
+	pripyat = 5, l11_pripyat = 5, l11_hospital = 5, labx8 = 5,
+	l12_stancia = 6, l12_stancia_2 = 6, l13_generators = 6,
+}
+
+local gauss_loot_levels = {
+	l11_pripyat = true, pripyat = true, l10_radar = true, l10u_bunker = true,
+	l11_hospital = true, l12_stancia = true, l12_stancia_2 = true, l13_generators = true,
+	l13u_warlab = true, l10_red_forest = true, jupiter = true, jupiter_underground = true, labx8 = true,
+}
+
+local stash_electronic_parts = {
+	prt_i_transistors = true,
+	prt_i_capacitors = true,
+	prt_i_resistors = true,
+	prt_i_copper = true,
+}
+
+local stash_cooking_kits = {
+	cooking = true,
+	army_bowler = true,
+}
+
+local stash_fuel_items = {
+	kerosene = true,
+	explo_jerrycan_fuel = true,
+}
+
+local stash_repair_allowed = {
+	glue_b = true,
+	glue_a = true,
+	glue_e = true,
+	gun_oil = true,
+	gun_oil_ru = true,
+	gun_oil_ru_d = true,
+	duct_tape = true,
+	grease = true,
+	steel_wool = true,
+	solvent = true,
+	rasp_tool = true,
+	ramrod_tool = true,
+	grooming = true,
+	swiss_knife = true,
+	sharpening_stones = true,
+}
+
+local stash_junk_patterns = {
+	"af_", "upgr_", "detector_", "itm_basickit", "itm_advancedkit", "itm_expertkit",
+	"itm_ammokit", "itm_drugkit", "itm_sleepbag", "lead_box", "compression_bag",
+	"sewing_kit_", "cleaning_kit_", "armor_repair_fa", "harmonica", "guitar",
+	"meinkampf", "porn", "picture_woman", "bolt", "prt_i_scrap", "prt_i_wood",
+	"prt_i_fasteners", "prt_i_paper", "batteries_dead", "shovel_", "snork_mask",
+	"mutant_part_snork", "jar", "cards", "walkie", "radio", "headlamp", "boots",
+	"underwear", "beadspread", "jewelry_box", "matches", "charcoal", "roubles",
+}
+
+local blacklisted_maps = {
+	["l13_generators"]        = true,
+	["jupiter_underground"]   = true,
+	["labx8"]                 = true,
+	["l03u_agr_underground"]  = true,
+	["l04u_labx18"]           = true,
+	["l08u_brainlab"]         = true,
+	["l10u_bunker"]           = true,
+	["l12u_control_monolith"] = true,
+	["l12u_sarcofag"]         = true,
+	["l13u_warlab"]           = true,
+	["fake_start"]            = true
+}
+
+local STASH_KIND_WEIGHTS = {
+    w_ammo      = 100,
+    i_food      = 90,
+    i_medical   = 90,
+    i_drink     = 70,
+    w_explosive = 35,
+    i_repair    = 25,
+    i_part      = 15,
+    i_kit       = 10,
+    i_tool      = 8,
+}
+
+-- СЛОВАРИ ТИРОВ
+local tier_by_kind = {
+    i_food  = 1,
+    i_drink = 1,
+    i_part  = 2,
+    i_kit   = 2,
+    i_tool  = 3
+}
+
+local exact_item_tiers = {
+    ["drug_anabiotic"] = 5, ["survival_kit"] = 5, ["medkit_scientic"] = 5, ["stimpack_scientic"] = 5,
+    ["medkit_army"] = 4, ["stimpack_army"] = 4, ["drug_psy_blockade"] = 4, ["drug_antidot"] = 4, 
+    ["drug_radioprotector"] = 4, ["antirad_cystamine"] = 4, ["antibio_sulfad"] = 4,
+    ["drug_booster"] = 3, ["jgut"] = 3, ["glucose"] = 3, ["yadylin"] = 3,
+    ["glue_e"] = 4, ["gun_oil_ru_d"] = 4,
+    ["glue_a"] = 2, ["gun_oil_ru"] = 2,
+    ["mine_new"] = 3,
+}
+
+local pattern_ammo_tiers = {
+    {"gauss",      5},
+    {"pkm",        4}, {"magnum_300", 4}, {"12%.7x55", 4},
+    {"og%-7b",     3}, {"ied",        3}, {"9x39",     3}, {"7%.62x54", 3}, {"7%.62x51", 3}, {"7%.92x33", 3},
+    {"5%.45",      2}, {"5%.56",      2}, {"7%.62x39", 2}
+}
+
+local function is_eco_allowed(val, eco)
+    if not (val and val ~= "") then return true end
+    local no_eco = str_explode(val, ",")
+    for i = 1, #no_eco do
+        if tonumber(no_eco[i]) == eco then
+            return false
+        end
+    end
+    return true
+end
+
+local function normalize_stash_level(level_name)
+	if not (level_name) then return nil end
+	level_name = string.lower(level_name)
+	return stash_level_aliases[level_name] or level_name
+end
+
+local function get_stash_loot_tier(level_name)
+	level_name = normalize_stash_level(level_name)
+	if not (level_name) then return 1 end
+	return stash_loot_tier_by_level[level_name] or 1
+end
+
+local function is_gauss_loot_level(level_name)
+	level_name = normalize_stash_level(level_name)
+	return level_name and gauss_loot_levels[level_name] or false
+end
+
+local function get_section_base(section)
+	return section:match("^(.+)__%d+$") or section
+end
+
+local function is_stash_junk(section)
+	if not section then return true end
+	local base = get_section_base(section)
+	for i=1,#stash_junk_patterns do
+		if sfind(section, stash_junk_patterns[i]) or sfind(base, stash_junk_patterns[i]) then
+			return true
+		end
+	end
+	return false
+end
+
+local function is_stash_repair_allowed(section)
+	if not section then return false end
+	local base = get_section_base(section)
+	return stash_repair_allowed[base] or stash_repair_allowed[section] or false
+end
+
+local kind_validators = {
+    i_repair = function(sec, base) return is_stash_repair_allowed(sec) end,
+    i_part   = function(sec, base) return stash_electronic_parts[base] end,
+    i_kit    = function(sec, base) return stash_cooking_kits[base] end,
+    i_tool   = function(sec, base) return stash_fuel_items[base] end,
+}
+
+local function get_item_min_location_tier(section, kind)
+    if tier_by_kind[kind] then
+        return tier_by_kind[kind]
+    end
+
+    local base = get_section_base(section)
+
+    if exact_item_tiers[base] then
+        return exact_item_tiers[base]
+    end
+
+    if kind == "w_ammo" or kind == "w_explosive" then
+        for i = 1, #pattern_ammo_tiers do
+            if sfind(base, pattern_ammo_tiers[i][1]) then
+                return pattern_ammo_tiers[i][2]
+            end
+        end
+        return 1
+    end
+    
+    if kind == "i_medical" or kind == "i_repair" then
+        return 1
+    end
+
+    local item_tier = ini_sys:r_float_ex(base, "tier") or 1
+    return math.max(1, item_tier - 1)
+end
+
+local function is_stash_item_in_pool(section, kind)
+    if not (section and kind and stash_allowed_kinds[kind]) then return false end
+    if is_stash_junk(section) then return false end
+
+    local validator = kind_validators[kind]
+    if validator then
+        return validator(section, get_section_base(section)) == true
+    end
+
+    return true
+end
+
+local function is_stash_item_allowed(section, kind, level_name)
+    if not is_stash_item_in_pool(section, kind) then return false end
+
+    local base = get_section_base(section)
+    local loot_tier = get_stash_loot_tier(level_name)
+
+    if sfind(base, "gauss") and not is_gauss_loot_level(level_name) then return false end
+
+    return not (level_name and loot_tier < get_item_min_location_tier(section, kind))
+end
+
+local function pick_stash_item(pool, kind, level_name)
+    local loot_tier = get_stash_loot_tier(level_name)
+
+    if (kind == "i_medical") then
+        local ext_med = game_setup and game_setup.LootTables and game_setup.LootTables.medical_by_tier
+        if ext_med and ext_med[loot_tier] then
+            local med_pool = ext_med[loot_tier]
+            if med_pool and #med_pool > 0 then
+                return med_pool[math.random(#med_pool)]
+            end
+        end
+    end
+    
+    if not pool then return nil end
+
+    local candidates = {}
+    local total_weight = 0
+    
+    for i = 1, #pool do
+        local sec = pool[i]
+        if is_stash_item_allowed(sec, kind, level_name) then
+            local item_tier = ini_sys:r_float_ex(get_section_base(sec), "tier") or 1
+            local w = 1
+            
+            if kind ~= "i_food" and kind ~= "i_drink" then
+                if loot_tier <= 2 then
+                    w = math.max(1, 6 - item_tier)
+                elseif loot_tier >= 5 then
+                    w = math.max(1, item_tier + loot_tier - 4)
+                else
+                    w = math.max(1, item_tier)
+                end
+            end
+            
+            candidates[#candidates + 1] = { section = sec, weight = w }
+            total_weight = total_weight + w
+        end
+    end
+    
+    if #candidates == 0 then return nil end
+    
+    local roll = math.random() * total_weight
+    for i = 1, #candidates do
+        roll = roll - candidates[i].weight
+        if roll <= 0 then
+            return candidates[i].section
+        end
+    end
+    
+    return candidates[#candidates].section
+end
+
+local function load_blacklist_to_table(section, target_table)
+    local n = ini_treasure:line_count(section)
+    for i = 0, n - 1 do
+        local _, key = ini_treasure:r_line(section, i, "", "")
+        target_table[key] = true
+    end
+end
+
+local function get_current_economy()
+    local config = axr_main.config
+    local eco = config:r_value("character_creation", "new_game_economy_treasure", 2)
+    if eco then
+        config:w_value("character_creation", "new_game_economy_treasure")
+        return eco
+    end
+    local state = alife_storage_manager.get_state()
+    return state.diff_eco and state.diff_eco["type"] or 1
+end
+
+local function register_possible_item(section, eco, eco_rules)
+    if not is_eco_allowed(eco_rules, eco) then return end
+
+    local sec, uses = utils_item.get_defined_uses(section)
+    local max_uses = sec and uses and ini_sys:r_float_ex(sec, "max_uses") or uses or 1
+    local sec_p = sec or section
+
+    if max_uses <= 1 and not ini_sys:section_exist(section) then return end
+
+    uses = uses or 1
+    local cost = (ini_sys:r_float_ex(sec_p, "cost") or 0) * (uses / max_uses)
+    local kind = ini_sys:r_string_ex(sec_p, "kind")
+    local tier = ini_sys:r_float_ex(sec_p, "tier")
+
+    if is_stash_repair_allowed(section) and (kind == "i_misc" or kind == "i_tool") then
+        kind = "i_repair"
+    end
+
+    if cost > 1 and kind and tier and is_stash_item_in_pool(section, kind) then
+        tier = clamp(math.ceil(tier - ((max_uses - uses) / 2)), 1, 5)
+        item_list[kind] = item_list[kind] or {}
+        item_list[kind][tier] = item_list[kind][tier] or {}
+        table.insert(item_list[kind][tier], section)
+    end
+end
+
+local function is_valid_stash_candidate(id, is_filled, no_spot, spawn_local, inv_box)
+    if is_filled ~= false then return false end
+    
+    if inv_box then
+        local se_box = alife_object(id)
+        if not se_box or se_box:clsid() ~= clsid.inventory_box_s or caches_blacklist[se_box:name()] then
+            return false
+        end
+    end
+    
+    if not no_spot and not box_in_valid_map(id) then return false end
+    if spawn_local and not box_in_same_map(id) then return false end
+    
+    return true
+end
+
+-- Построение списка весов с БЛОКИРОВКОЙ инструментов и ремнаборов в обычных тайниках
+local function build_weighted_kinds(cfg, is_rare)
+    local list = {}
+    for _, kind in ipairs(cfg.kind_list) do
+        -- Если тайник обычный (зелёный), пропускаем категории инструментов и ремкомплектов
+        if not is_rare and (kind == "i_tool" or kind == "i_repair" or kind == "i_kit") then
+            -- Блокировка: инструментам место только в фиолетовых тайниках из custom_loot
+        else
+            local weight = STASH_KIND_WEIGHTS[kind] or 0
+            if weight > 0 and stash_allowed_kinds[kind] and cfg.kind_val[kind] and cfg.kind_val[kind].chance > 0 then
+                for _ = 1, weight do
+                    table.insert(list, kind)
+                end
+            end
+        end
+    end
+    return list
+end
+
+local function try_pick_item_by_kind(kind, cfg, stash_level, inc)
+    if kind == "i_medical" then
+        return pick_stash_item(nil, kind, stash_level)
+    end
+
+    shuffle_table(cfg.tier_list)
+    for _, tier in ipairs(cfg.tier_list) do
+        if item_list[kind] and item_list[kind][tier] and cfg.tier_val[kind] and cfg.tier_val[kind][tier] then
+            local chance = cfg.kind_val[kind].chance
+            local chance_multi = cfg.tier_val[kind][tier].chance_multi or 1
+
+            if math.random(1, 100) < (chance * chance_multi) + inc then
+                return pick_stash_item(item_list[kind][tier], kind, stash_level)
+            end
+        end
+    end
+    return nil
+end
+
+local function generate_stash_content(cfg, stash_level, target_items, is_rare)
+    local content = {}
+    local attempts, inc = 0, 0
+    local max_attempts = target_items * 40
+    local weighted_kinds = build_weighted_kinds(cfg, is_rare)
+
+    while #content < target_items and attempts < max_attempts do
+        attempts = attempts + 1
+        local skip = false
+
+        if #weighted_kinds > 0 then
+            local kind = weighted_kinds[math.random(#weighted_kinds)]
+            if kind then
+                local picked = try_pick_item_by_kind(kind, cfg, stash_level, inc)
+                if picked then
+                    table.insert(content, picked)
+                    skip = true
+                end
+            end
+        end
+        inc = skip and math.max(0, inc - 10) or (inc + 10)
+    end
+    return content
+end
+
+local function parse_stash_settings(section_settings, section_effects, target_tbl)
+    target_tbl.min_weight = ini_treasure:r_float_ex(section_settings, "min_weight")
+    target_tbl.max_weight = ini_treasure:r_float_ex(section_settings, "max_weight")
+
+    if section_settings == "settings_rare" then
+        target_tbl.reward_bonus = parse_list(ini_treasure, section_settings, "reward_bonus")
+        target_tbl.task_num     = ini_treasure:r_float_ex(section_settings, "completed_task_num")
+        target_tbl.start_chance = ini_treasure:r_float_ex(section_settings, "start_chance")
+    end
+
+    local num_of_tiers = ini_treasure:r_float_ex(section_settings, "num_of_tiers") or 5
+    for i = 1, num_of_tiers do
+        target_tbl.tier_list[#target_tbl.tier_list + 1] = i
+    end
+
+    local n = ini_treasure:line_count(section_effects)
+    for i = 0, n - 1 do
+        local _, kind, value = ini_treasure:r_line(section_effects, i, "", "")
+        if kind and value then
+            local str = str_explode(value, ",")
+            if #str >= (2 + num_of_tiers * 2) then
+                target_tbl.kind_val[kind] = { chance = tonumber(str[1]), weight = tonumber(str[2]) }
+                target_tbl.tier_val[kind] = {}
+                target_tbl.kind_list[#target_tbl.kind_list + 1] = kind
+
+                for tier = 1, num_of_tiers do
+                    target_tbl.tier_val[kind][tier] = {
+                        chance_multi = tonumber(str[(tier * 2) + 1]),
+                        weight_multi = tonumber(str[(tier * 2) + 2])
+                    }
+                end
+            end
+        end
+    end
+end
+
+local function calculate_weapon_addon_flags(section)
+    local flag = 0
+    if ini_sys:r_float_ex(section, "scope_status") then flag = flag + 1 end
+    if ini_sys:r_float_ex(section, "grenade_launcher_status") then flag = flag + 2 end
+    if ini_sys:r_float_ex(section, "silencer_status") then flag = flag + 4 end
+    return math.random(0, flag)
+end
+
+local function check_rare_toolkit_reward(no_spot, bonus_items)
+    if not (db.actor and no_spot ~= true and type(no_spot) ~= "string") then
+        return false, bonus_items
+    end
+
+    local cnt = load_var(db.actor, "toolkit_reward_count") or 0
+    local factor = stash_rare.start_chance * (cnt / stash_rare.task_num)
+
+    if cnt >= stash_rare.task_num and math.random(100) < factor then
+        local last_index = load_var(db.actor, "toolkit_reward_last") or 0
+        local new_index = (last_index % #stash_rare.reward_bonus) + 1
+
+        save_var(db.actor, "toolkit_reward_last", new_index)
+        save_var(db.actor, "toolkit_reward_count", 0)
+
+        local toolkit = stash_rare.reward_bonus[new_index]
+        bonus_items = bonus_items or {}
+        table.insert(bonus_items, toolkit)
+
+        return true, bonus_items
+    end
+
+    return false, bonus_items
+end
+
+local function get_obj_level_name(se_obj)
+    if not se_obj then return nil end
+    return alife():level_name(game_graph():vertex(se_obj.m_game_vertex_id):level_id())
+end
+
+local function get_stash_full_name(se_obj)
+    local name = se_obj:name()
+    if string.find(name, "level_prefix_inventory_box") then  
+        local lvl = get_obj_level_name(se_obj)
+        return (lvl and (lvl .. "_") or "") .. name
+    end
+    return name
+end
+
+local function remove_stash_map_spots(id)
+    local spots = { "treasure", "treasure_searched", "treasure_unique" }
+    for i = 1, #spots do
+        level.map_remove_object_spot(id, spots[i])
+    end
+end
+
+function init_settings()
+    load_blacklist_to_table("blacklist_stashes_names", caches_blacklist)
+    load_blacklist_to_table("rare_stashes_names", caches_rare)
+
+    parse_stash_settings("settings_common", "kind_tier_effect_common", stash_common)
+    parse_stash_settings("settings_rare", "kind_tier_effect_rare", stash_rare)
+
+    local eco = get_current_economy()
+    
+    for i = 0, ini_treasure:line_count("possible_items") - 1 do
+        local _, section, rules = ini_treasure:r_line("possible_items", i, "", "")
+        register_possible_item(section, eco, rules)
+    end
+
+    for i = 0, ini_treasure:line_count("stash_bonus") - 1 do
+        local _, section, rules = ini_treasure:r_line("stash_bonus", i, "", "")
+        if is_eco_allowed(rules, eco) and is_stash_item_in_pool(section, ini_sys:r_string_ex(section, "kind")) then
+            table.insert(stash_bonus, section)
+        end
+    end
+end
+
+-- Внедрение кастомного лута (инструменты только для фиолетовых)
+local function inject_custom_bonus_loot(content, stash_level, is_rare)
+    local loc_tier = get_stash_loot_tier(stash_level)
+
+    -- ИНСТРУМЕНТЫ И АПГРЕЙДЫ
+    if is_rare then
+        -- ФИОЛЕТОВЫЙ ТАЙНИК: 1 набор инструментов и 6 деталей апгрейда
+        local tool_item = custom_loot_config.get_random_tool(loc_tier)
+        if tool_item then table.insert(content, tool_item) end
+
+        table.insert(content, custom_loot_config.get_random_upgrade_armor(1))
+        table.insert(content, custom_loot_config.get_random_upgrade_armor(2))
+        table.insert(content, custom_loot_config.get_random_upgrade_armor(3))
+        
+        table.insert(content, custom_loot_config.get_random_upgrade_weapon(1))
+        table.insert(content, custom_loot_config.get_random_upgrade_weapon(2))
+        table.insert(content, custom_loot_config.get_random_upgrade_weapon(3))
+    else
+        -- ЗЕЛЕНЫЙ ТАЙНИК: По 1 детали апгрейда для грубой работы
+        table.insert(content, custom_loot_config.get_random_upgrade_armor(1))
+        table.insert(content, custom_loot_config.get_random_upgrade_weapon(1))
+    end
+
+    -- ЭКИПИРОВКА И ОРУЖИЕ
+    local weapon_sidearm, weapon_main, armor, helmet
+
+    if math.random(1, 2) == 1 then
+        weapon_sidearm = custom_loot_config.get_random_pistol(loc_tier)
+    else
+        weapon_sidearm = custom_loot_config.get_random_smg(loc_tier)
+    end
+
+    local w_main_roll = math.random(1, 4)
+    if w_main_roll == 1 then 
+        weapon_main = custom_loot_config.get_random_ar_ak(loc_tier)
+    elseif w_main_roll == 2 then 
+        weapon_main = custom_loot_config.get_random_ar_nato(loc_tier)
+    elseif w_main_roll == 3 then 
+        weapon_main = custom_loot_config.get_random_shotgun(loc_tier)
+    else 
+        weapon_main = custom_loot_config.get_random_sniper(loc_tier) 
+    end
+
+    if is_rare then
+        local a_roll = math.random(1, 3)
+        if a_roll == 1 then 
+            armor = custom_loot_config.get_random_outfit_medium_heavy(math.max(2, loc_tier))
+        elseif a_roll == 2 then 
+            armor = custom_loot_config.get_random_outfit_scientific(loc_tier)
+        else 
+            armor = custom_loot_config.get_random_outfit_exo(loc_tier)
+        end
+        helmet = custom_loot_config.get_random_helmet(loc_tier)
+    else
+        local a_roll = math.random(1, 2)
+        if a_roll == 1 then 
+            armor = custom_loot_config.get_random_outfit_light(loc_tier)
+        else  
+            armor = custom_loot_config.get_random_outfit_medium_heavy(math.min(2, loc_tier))
+        end
+        helmet = custom_loot_config.get_random_helmet(math.min(2, loc_tier))
+    end
+
+    if weapon_sidearm then table.insert(content, weapon_sidearm) end
+    if weapon_main then table.insert(content, weapon_main) end
+    if armor then table.insert(content, armor) end
+    if helmet then table.insert(content, helmet) end
+end
+
+function get_random_stash(no_spot, hint, spawn_local, inv_box, force_rare)
+    last_secret = true
+    if caches_count <= 0 then return end
+    if is_empty(item_list) then init_settings() end
+
+    local candidates = {}
+    for id, is_filled in pairs(caches) do
+        if is_valid_stash_candidate(id, is_filled, no_spot, spawn_local, inv_box) then
+            table.insert(candidates, id)
+        end
+    end
+
+    -- Защита (фоллбек): если на текущей локации тайников нет, ищем по всей Зоне
+    if #candidates == 0 and spawn_local then
+        for id, is_filled in pairs(caches) do
+            if is_valid_stash_candidate(id, is_filled, no_spot, false, inv_box) then
+                table.insert(candidates, id)
+            end
+        end
+    end
+
+    if #candidates == 0 then return end
+
+    local id = candidates[math.random(#candidates)]
+    local se_stash = alife_object(id)
+    
+    if not se_stash then
+        release_stash_by_id(id)
+        return
+    end
+
+    local is_rare = force_rare or (caches_rare[get_stash_full_name(se_stash)] == true)
+    if force_rare == false then 
+        is_rare = false 
+    end
+
+    local spot = (type(no_spot) == "string") and no_spot or (is_rare and "treasure_searched" or "treasure")
+
+    if no_spot ~= true and level.map_has_object_spot(id, spot) == 0 then
+        local stash_name = tostring(se_stash:name()):gsub("level_prefix", get_obj_level_name(se_stash) or "", 1)
+        local translated_name = game.translate_string("st_" .. stash_name .. "_name")
+        local translated_desc = game.translate_string("st_" .. stash_name .. "_descr")
+
+        return id, translated_name, translated_desc, hint
+    end
+
+    return id, hint
+end
+
+function set_random_stash(no_spot, hint, bonus_items, id, dbg, force_rare)
+    if is_empty(item_list) then init_settings() end
+
+    local se_obj = not dbg and alife_object(id)
+    local stash_level = se_obj and get_obj_level_name(se_obj) or nil
+
+    local stash_full_name = se_obj and get_stash_full_name(se_obj) or ""
+    local is_rare = force_rare or (caches_rare[stash_full_name] == true)
+    if force_rare == false then 
+        is_rare = false 
+    end
+
+    local give_toolkit, content = check_rare_toolkit_reward(no_spot, bonus_items)
+    content = content or {}
+
+    local cfg = is_rare and stash_rare or stash_common
+    local min_items, max_items = get_stash_item_limits(stash_level)
+    local target_count = math.random(min_items, max_items)
+
+    local new_items = generate_stash_content(cfg, stash_level, target_count - #content, is_rare)
+    for _, itm in ipairs(new_items) do
+        table.insert(content, itm)
+    end
+
+    if no_spot ~= true then
+        inject_custom_bonus_loot(content, stash_level, is_rare)
+    end
+
+    if dbg then 
+        printf("%s | %s", id, table.concat(content, " - "))
+        return 
+    end
+
+   if #content > 0 then
+        local spot = (type(no_spot) == "string") and no_spot or (is_rare and "treasure_searched" or "treasure")
+        if no_spot ~= true then
+            remove_stash_map_spots(id)
+            level.map_add_object_spot_ser(id, spot, hint or "")
+            
+            local loc_name = stash_level and game.translate_string(stash_level) or "Zona"
+            local stash_title = "Sekretny taynik"
+            if se_obj then
+                local stash_name_str = tostring(se_obj:name()):gsub("level_prefix", stash_level or "", 1)
+                stash_title = game.translate_string("st_" .. stash_name_str .. "_name") or "Taynik"
+            end
+
+            -- ЧИСТЫЙ ВЫЗОВ ЧЕРЕЗ NEWS_MANAGER
+            news_manager.send_stash_navodka(loc_name, stash_title)
+
+            local now_sec = game.get_game_time():diffSec(level.get_start_time())
+            local expire_delay = is_rare and (3 * 86400) or 86400
+            stash_expiration[id] = now_sec + expire_delay 
+        end
+
+        caches[id] = table.concat(content, ",")
+        return id
+    end
+
+    caches[id] = false
+end
+
+function create_random_stash(no_spot, hint, bonus_items, spawn_local, inv_box, force_rare)
+    local id, name, desc, stash_hint = get_random_stash(no_spot, hint, spawn_local, inv_box, force_rare)
+    if not id then
+        printe("! ERROR create_random_stash | no server object found")
+        return
+    end
+
+    local formatted_str = name
+    if desc and stash_hint then
+        formatted_str = string.format("%%c[255,255,160,0]%s\\n%%c[default]%s\\n%%c[160,100,100,200]%s", name, desc, stash_hint)
+    end
+
+    set_random_stash(no_spot, formatted_str, bonus_items, id, false, force_rare)
+end
+
+function try_give_quest_stash(giver_id, hint, bonus_items)
+    if type(giver_id) == "userdata" then
+        giver_id = giver_id:name() or tostring(giver_id:id())
+    end
+    giver_id = (type(giver_id) == "string" and giver_id ~= "") and giver_id or "default_npc"
+
+    local base_green    = ini_treasure:r_float_ex("quest_stash_chances", "base_green") or 0
+    local base_purple   = ini_treasure:r_float_ex("quest_stash_chances", "base_purple") or 0
+    local max_green_cap = ini_treasure:r_float_ex("quest_stash_chances", "max_green") or 100
+    local step_green    = ini_treasure:r_float_ex("quest_stash_chances", "step_green") or 10
+    local step_purple   = ini_treasure:r_float_ex("quest_stash_chances", "step_purple") or 5
+
+    local current_green = stash_chance_green[giver_id] or base_green
+    local current_purple = stash_chance_purple[giver_id] or base_purple
+    local fails = stash_green_fails[giver_id] or 0
+
+    current_green = math.min(current_green, max_green_cap)
+
+    -- Проверяем удачный кубик для зеленого тайника
+    if math.random(1, 100) <= current_green then
+        local is_purple = false
+        if current_purple > 0 and math.random(1, 100) <= current_purple then
+            is_purple = true
+        end
+        
+        if is_purple then
+            -- СБРОС: Выпал фиолетовый тайник (редкий) -> сбрасываем всё для этого NPC
+            stash_chance_green[giver_id] = base_green
+            stash_chance_purple[giver_id] = base_purple
+            stash_green_fails[giver_id] = 0
+            create_random_stash(nil, hint, bonus_items, false, false, true) 
+        else
+            -- Выпал зеленый тайник: сбрасываем зеленый шанс и счетчик неудач до 0
+            stash_chance_green[giver_id] = base_green
+            stash_green_fails[giver_id] = 0
+            create_random_stash(nil, hint, bonus_items, true, false, false)
+        end
+    else
+        -- Неудачная попытка: увеличиваем счетчик промахов
+        fails = fails + 1
+        stash_green_fails[giver_id] = fails
+
+        current_green = math.min(current_green + step_green, max_green_cap)
+        stash_chance_green[giver_id] = current_green
+
+        if fails > 4 then
+            current_purple = current_purple + step_purple
+            stash_chance_purple[giver_id] = current_purple
+        end
+
+        -- ЧИСТЫЙ ВЫЗОВ ЧЕРЕЗ NEWS_MANAGER
+        news_manager.send_stash_fail_report(current_green, fails)
+    end
+end
+function get_stash_item_limits(level_name)
+    local key = "default"
+    if level_name then
+        local lname = string.lower(level_name)
+        key = stash_level_aliases[lname] or lname
+    end
+
+    local val = ini_treasure:r_string_ex("stash_items_by_level", key) 
+             or ini_treasure:r_string_ex("stash_items_by_level", "default")
+
+    if val then
+        local str = str_explode(val, ",")
+        return tonumber(str[1]) or 3, tonumber(str[2]) or 5
+    end
+
+    return 3, 5
+end
+
+function try_spawn_treasure(box)
+    local id = box:id()
+    local cache_data = caches[id]
+
+    if not cache_data or type(cache_data) ~= "string" then return end
+
+    caches[id] = true
+    local spawned_items = str_explode(cache_data, ",")
+
+    for i = 1, #spawned_items do
+        local section = spawned_items[i]
+
+        if ini_sys:section_exist(section) then
+            local cls = ini_sys:r_clsid(section, "class")
+            
+            if IsWeapon(nil, cls) and cls ~= clsid.wpn_knife_s then
+                local se_obj = alife_create(section, box:position(), box:level_vertex_id(), box:game_vertex_id(), id, false)
+                if se_obj then
+                    local data = utils_stpk.get_weapon_data(se_obj)
+                    if data then
+                        local ammos = parse_list(ini_sys, section, "ammo_class")
+                        local ct = ammos and #ammos or 0
+
+                        data.addon_flags = calculate_weapon_addon_flags(section)
+                        data.ammo_type   = ct > 0 and math.random(0, ct - 1) or 0
+                        data.condition   = math.random(30, 50) / 100
+                        utils_stpk.set_weapon_data(data, se_obj)
+                    end
+                    alife():register(se_obj)
+                end
+            elseif IsOutfit(nil, cls) or IsHeadgear(nil, cls) then
+                local se_obj = alife_create(section, box:position(), box:level_vertex_id(), box:game_vertex_id(), id, false)
+                if se_obj then
+                    local data = utils_stpk.get_item_data(se_obj)
+                    if data then
+                        data.condition = math.random(30, 50) / 100
+                        utils_stpk.set_item_data(data, se_obj)
+                    end
+                    alife():register(se_obj)
+                end
+            else
+                alife_create_item(section, box, item_prop_table)
+            end
+        end
+    end
+end
+
+local next_check_time = 0
+
+local function check_periodic_stashes()
+    local tg = time_global()
+    if tg < next_check_time then return end
+    next_check_time = tg + 5000
+
+    local current_time = game.get_game_time()
+    local last_update = load_var(db.actor, "stash_last_update_time")
+    
+    local start_time = level.get_start_time()
+    local now_sec = current_time:diffSec(start_time)
+
+    for id, exp_time in pairs(stash_expiration) do
+        if now_sec >= exp_time then
+            if caches[id] and caches[id] ~= false then
+                caches[id] = false
+                remove_stash_map_spots(id)
+            end
+            stash_expiration[id] = nil
+        end
+    end
+
+    if not last_update then
+        local next_delay = math.random(1, 3) * 86400
+        save_var(db.actor, "stash_last_update_time", now_sec + next_delay)
+        update_all_stashes_by_level()
+        return
+    end
+
+    if now_sec >= last_update then
+        update_all_stashes_by_level()
+        local next_delay = math.random(1, 3) * 86400
+        save_var(db.actor, "stash_last_update_time", now_sec + next_delay)
+    end
+end
+
+function update_all_stashes_by_level()
+    if is_empty(item_list) then init_settings() end
+
+    for id, data in pairs(caches) do
+        if data == true then
+            caches[id] = false
+            remove_stash_map_spots(id)
+        end
+    end
+
+    local stashes_by_level = {}
+    for id, is_filled in pairs(caches) do
+        local se_obj = alife_object(id)
+        if se_obj and not caches_blacklist[se_obj:name()] then
+            local lvl = get_obj_level_name(se_obj)
+            if lvl then
+                stashes_by_level[lvl] = stashes_by_level[lvl] or {}
+                table.insert(stashes_by_level[lvl], id)
+            end
+        end
+    end
+
+    for lvl, s_list in pairs(stashes_by_level) do
+        shuffle_table(s_list)
+        local num_to_fill = math.random(0, 3) 
+        
+        for i = 1, math.min(num_to_fill, #s_list) do
+            local stash_id = s_list[i]
+            set_random_stash(true, nil, nil, stash_id) 
+        end
+    end
+    
+    printf("~ Stash manager: Periodic update complete. Filled 0-3 stashes per level.")
+end
+
+function box_in_same_map(id)
+    local actor = alife():actor()
+    local obj = alife_object(id)
+    return (actor and obj) and simulation_objects.is_on_the_nearby_level(actor, obj) or false
+end
+
+function box_in_valid_map(id)
+    local se_stash = alife_object(id)
+    if not se_stash then return false end
+    
+    local lvl = get_obj_level_name(se_stash)
+    return blacklisted_maps[lvl] ~= true
+end
+
+function release_stash_by_id(id)
+    if id and caches[id] ~= nil then
+        caches[id] = nil
+        stash_expiration[id] = nil
+        caches_count = math.max(0, caches_count - 1)
+    end
+end
+
+function simulate_stash_creation(num)
+    printf("--------- Create Stash: ")
+    for i = 1, num do
+        printf("----------------------------------------------------------")
+        set_random_stash(nil, nil, nil, i, true)
+    end
+    
+    printf("--------- Items count: ")
+    for k, v in utils_data.pairsByKeys(dbg_items) do
+        printf(k .. " := " .. tostring(v))
+    end
+end
+
+local function on_game_load()
+    if caches_count > 0 then return end
+    if is_empty(item_list) then init_settings() end
+
+    local sim = alife()
+    
+    for i = 1, 65534 do
+        local se_obj = sim:object(i)
+        
+        if se_obj and IsInvbox(nil, se_obj:clsid()) then
+            local name = se_obj:name()
+            
+            if not caches_blacklist[name] then
+                caches[se_obj.id] = false
+                caches_count = caches_count + 1
+                
+                if enable_debug then
+                    local full_name = get_stash_full_name(se_obj)
+                    local spot = caches_rare[full_name] and "treasure_searched" or "treasure"
+                    level.map_add_object_spot_ser(se_obj.id, spot, full_name)
+                end
+            end
+        end
+    end
+end
+
+local function actor_on_item_take_from_box(box, itm)
+    local id = box:id()
+    if not caches[id] or caches[id] == false then return end
+
+    caches[id] = false
+    remove_stash_map_spots(id)
+    stash_expiration[id] = nil
+     
+    game_statistics.increment_statistic("stashes_found")
+    news_manager.send_treasure(1)
+    
+    local se_stash = alife_object(id)
+    if se_stash then
+        local lvl = get_obj_level_name(se_stash)
+        if lvl then
+            item_radio.clear_stash(lvl, id)
+        end
+    end
+end
+
+local function save_state(data)
+    if caches_count <= 0 then return end
+
+    data.treasure_manager = data.treasure_manager or {}
+    data.treasure_manager.caches_count = caches_count
+    data.treasure_manager.caches = caches
+    data.treasure_manager.stash_expiration = stash_expiration
+    data.treasure_manager.stash_chance_green = stash_chance_green
+    data.treasure_manager.stash_chance_purple = stash_chance_purple
+    data.treasure_manager.stash_green_fails = stash_green_fails
+end
+
+local function load_state(data)
+    stash_chance_green = {}
+    stash_chance_purple = {}
+    stash_green_fails = {}
+    stash_expiration = {}
+
+    if not data.treasure_manager then return end
+
+    caches_count = data.treasure_manager.caches_count or caches_count
+    caches = data.treasure_manager.caches or caches
+    stash_expiration = data.treasure_manager.stash_expiration or {}
+    stash_chance_green = data.treasure_manager.stash_chance_green or {}
+    stash_chance_purple = data.treasure_manager.stash_chance_purple or {}
+    stash_green_fails = data.treasure_manager.stash_green_fails or {}
+
+    data.treasure_manager.caches_count = nil
+    data.treasure_manager.caches = nil
+end
+
+local function physic_object_on_use_callback(box, who)
+    if IsInvbox(box) then
+        try_spawn_treasure(box)
+    end
+end
+
+local function map_spot_menu_add_property(ui, id, lvl)
+    local se_obj = alife_object(id)
+    if se_obj and IsInvbox(nil, se_obj:clsid()) then
+        ui:AddItem("Save as Rare Stash")
+    end
+end
+
+local function map_spot_menu_property_clicked(property_ui, id, level_name, prop)
+    if prop ~= "Save as Rare Stash" then return end
+
+    local se_obj = alife_object(id)
+    if not se_obj then return end
+    
+    local full_name = get_stash_full_name(se_obj)
+    local ltx = ini_file_ex("items\\settings\\treasure_manager.ltx", true)
+    
+    ltx:w_value("rare_stashes_names", full_name, "true")
+    ltx:save()
+    printf("- Treasure manager | name (%s) saved for rare stash", full_name)
+end
+
+function save(pk)
+    if USE_MARSHAL then return end
+    
+    pk:w_u16(caches_count)
+    for id, v in pairs(caches) do
+        pk:w_u16(id)
+        if type(v) == "string" then
+            pk:w_u8(2)
+            pk:w_stringZ(v)
+        elseif v == true then
+            pk:w_u8(1)
+        else
+            pk:w_u8(0)
+        end
+    end
+end
+
+function load(pk)
+    if USE_MARSHAL then return end
+    
+    caches_count = pk:r_u16()
+    for i = 1, caches_count do
+        local id = pk:r_u16()
+        local flag = pk:r_u8()
+        if flag == 2 then
+            caches[id] = pk:r_stringZ()
+        elseif flag == 1 then
+            caches[id] = true
+        else
+            caches[id] = false
+        end
+    end
+end
+
+function actor_on_update()
+    check_periodic_stashes()
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("on_game_load", on_game_load)
+    RegisterScriptCallback("actor_on_item_take_from_box", actor_on_item_take_from_box)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("physic_object_on_use_callback", physic_object_on_use_callback)
+    
+    if enable_debug then
+        RegisterScriptCallback("map_spot_menu_add_property", map_spot_menu_add_property)
+        RegisterScriptCallback("map_spot_menu_property_clicked", map_spot_menu_property_clicked)
+    end
+end

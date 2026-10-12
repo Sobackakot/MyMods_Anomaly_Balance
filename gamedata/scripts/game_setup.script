@@ -1,0 +1,372 @@
+-- ============================================================
+-- Единый менеджер динамического лута (Модульная архитектура)
+-- ============================================================
+
+-- ============================================================
+-- MODULE 1: Config & Constants
+-- ============================================================
+local Config = {
+    
+    enable_debug = false,
+    -- 3 игровых суток = 72 игровых часа = 259200 игровых секунд.
+    respawn_time_sec = 86400,
+    -- Шанс успешного респавна предмета после истечения КД (в процентах: 1 - 100)
+    respawn_chance = 20,
+    Phases = {
+        INITIAL_READY  = 1, -- Первый гарантированный предмет еще не создавался.
+        ACTIVE_INITIAL = 2, -- На точке находится первый гарантированный предмет.
+        COOLDOWN       = 3, -- Предмет забран, идет 3-дневный cooldown.
+        RESPAWN_READY  = 4, -- Cooldown истек, можно создавать random item.
+        ACTIVE_RANDOM  = 5  -- На точке находится random respawn.
+    },
+    
+    major_levels = {
+        "l01_escape", "k01_darkscape", "y04_pole", "k00_marsh", "l02_garbage",
+        "l03_agroprom", "l03u_agr_underground", "l04_darkvalley", "l04u_labx18",
+        "k02_trucks_cemetery", "l05_bar", "l06_rostok", "l09_deadcity", "l08_yantar",
+        "l08u_brainlab", "l07_military", "l10_red_forest", "l10_limansk", "l10_radar",
+        "l10u_bunker", "zaton", "jupiter", "jupiter_underground", "pripyat", "labx8",
+        "l11_pripyat", "l11_hospital", "l12_stancia", "l12_stancia_2", "l13_generators"
+    }
+}
+
+local PhaseNames = {
+    [Config.Phases.INITIAL_READY]  = "INITIAL_READY",
+    [Config.Phases.ACTIVE_INITIAL] = "ACTIVE_INITIAL",
+    [Config.Phases.COOLDOWN]       = "COOLDOWN",
+    [Config.Phases.RESPAWN_READY]  = "RESPAWN_READY",
+    [Config.Phases.ACTIVE_RANDOM]  = "ACTIVE_RANDOM"
+}
+
+local function print_debug(fmt, ...)
+    if Config.enable_debug then printf("[DYN_LOOT] " .. fmt, ...) end
+end
+
+-- ============================================================
+-- MODULE 2: Loot Tables & Data
+-- ============================================================
+LootTables = {
+    world_level_tier = {
+        l01_escape = 1, k01_darkscape = 1, y04_pole = 1, k00_marsh = 1,
+        l02_garbage = 1, l03_agroprom = 1, l04_darkvalley = 1,
+        k02_trucks_cemetery = 2, l05_bar = 2, l06_rostok = 2,
+        l09_deadcity = 2, l08_yantar = 2,
+        l07_military = 3, l10_red_forest = 3, l10_limansk = 3, l10_radar = 3,
+        zaton = 4, jupiter = 4,
+        pripyat = 5, l11_pripyat = 5, l11_hospital = 5, labx8 = 5,
+        l12_stancia = 6, l12_stancia_2 = 6, l13_generators = 6,
+        l03u_agr_underground = 1, l04u_labx18 = 1, l08u_brainlab = 2,
+        l10u_bunker = 3, jupiter_underground = 4,
+    },
+    medical_by_tier = {
+        [1] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" },
+        [2] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_booster", "medkit_army", "jgut", "salicidic_acid", "glucose", "drug_antidot", "drug_radioprotector", "drug_psy_blockade", "stimpack", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" },
+        [3] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_booster", "medkit_army", "jgut", "salicidic_acid", "glucose", "drug_antidot", "drug_radioprotector", "drug_psy_blockade", "stimpack", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" },
+        [4] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_booster", "medkit_army", "jgut", "salicidic_acid", "glucose", "drug_antidot", "drug_radioprotector", "drug_psy_blockade", "stimpack", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" },
+        [5] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_booster", "medkit_army", "jgut", "salicidic_acid", "glucose", "drug_antidot", "drug_radioprotector", "drug_psy_blockade", "stimpack", "drug_anabiotic", "cocaine", "analgetic", "morphine", "medkit_scientic", "stimpack_army", "stimpack_scientic", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" },
+        [6] = { "bandage", "antirad", "caffeine", "drug_coagulant", "medkit", "energy_drink", "glucose_s", "drug_booster", "medkit_army", "jgut", "salicidic_acid", "glucose", "drug_antidot", "drug_radioprotector", "drug_psy_blockade", "stimpack", "drug_anabiotic", "cocaine", "analgetic", "morphine", "medkit_scientic", "stimpack_army", "stimpack_scientic", "drug_sleepingpills", "antibio_chlor", "antibio_sulfad", "antiemetic", "antirad_cystamine", "antirad_kalium", "yadylin", "tetanus", "akvatab", "joint", "vodka", "protein" }
+    },
+    armor_kit_by_tier = {
+        [1] = { "light_repair_kit", "armor_repair_fa", "sewing_kit_b" },
+        [2] = { "light_repair_kit", "medium_repair_kit", "sewing_kit_a", "armor_repair_fa" },
+        [3] = { "medium_repair_kit", "heavy_repair_kit", "light_repair_kit", "sewing_kit_h" },
+        [4] = { "medium_repair_kit", "heavy_repair_kit", "exo_repair_kit" },
+        [5] = { "heavy_repair_kit", "exo_repair_kit" },
+        [6] = { "exo_repair_kit", "heavy_repair_kit" },
+    },
+    weapon_kit_by_tier = {
+        [1] = { "toolkit_p", "cleaning_kit_p" },
+        [2] = { "toolkit_p", "toolkit_s", "cleaning_kit_s" },
+        [3] = { "toolkit_s", "toolkit_r5", "cleaning_kit_r5" },
+        [4] = { "toolkit_r5", "toolkit_r7", "cleaning_kit_r7" },
+        [5] = { "toolkit_r7", "cleaning_kit_r7", "cleaning_kit_u" },
+        [6] = { "toolkit_r7", "cleaning_kit_u" },
+    },
+    consumable_by_tier = {
+        [1] = { "glue_b", "duct_tape", "grease", "solvent", "sewing_kit_b", "gun_oil", "sharpening_stones", "rasp_tool", "ramrod_tool", "prt_o_ballistic_1", "prt_o_ballistic_2", "prt_o_ballistic_3", "prt_o_ballistic_4", "prt_o_retardant_1", "prt_o_retardant_2", "prt_o_retardant_3", "prt_o_retardant_4" },
+        [2] = { "glue_b", "glue_a", "duct_tape", "grease", "solvent", "sewing_kit_b", "sewing_kit_a", "gun_oil", "gun_oil_ru", "leatherman_tool", "helmet_repair_kit", "prt_o_ballistic_5", "prt_o_ballistic_6", "prt_o_ballistic_7", "prt_o_ballistic_8", "prt_o_retardant_5", "prt_o_retardant_6", "prt_o_retardant_7", "prt_o_retardant_8" },
+        [3] = { "glue_a", "glue_b", "duct_tape", "grease", "solvent", "sewing_kit_a", "sewing_kit_h", "gun_oil_ru", "gun_oil", "prt_i_copper", "prt_o_ballistic_9", "prt_o_ballistic_10", "prt_o_ballistic_11", "prt_o_ballistic_12", "prt_o_retardant_9", "prt_o_retardant_10", "prt_o_retardant_11", "prt_o_retardant_12" },
+        [4] = { "glue_a", "glue_e", "duct_tape", "grease", "solvent", "sewing_kit_a", "sewing_kit_h", "gun_oil_ru", "gun_oil_ru_d", "prt_i_electronics", "prt_i_capacitors", "prt_o_ballistic_13", "prt_o_ballistic_14", "prt_o_ballistic_15", "prt_o_ballistic_16", "prt_o_retardant_13", "prt_o_retardant_14", "prt_o_retardant_15", "prt_o_retardant_16" },
+        [5] = { "glue_a", "glue_e", "duct_tape", "grease", "solvent", "sewing_kit_a", "sewing_kit_h", "gun_oil", "gun_oil_ru_d", "prt_i_electronics", "prt_i_transistors", "prt_o_ballistic_17", "prt_o_ballistic_18", "prt_o_ballistic_19", "prt_o_retardant_17", "prt_o_retardant_18", "prt_o_retardant_19" },
+        [6] = { "glue_e", "glue_a", "duct_tape", "grease", "solvent", "sewing_kit_h", "sewing_kit_a", "gun_oil", "gun_oil_ru_d", "af_aam", "af_iam", "prt_i_microchips", "prt_o_ballistic_20", "prt_o_retardant_20" },
+    },
+    module_base_list = { "af_cooler", "af_camelbak", "af_frames", "af_freon", "af_grid", "af_surge", "af_kevlar", "af_plates" },
+    module_up_list = { "af_cooler_up", "af_camelbak_up", "af_frames_up", "af_freon_up", "af_grid_up", "af_surge_up", "af_kevlar_up", "af_plates_up" },
+    junk_items_list = { "broken_detector", "flashlight_broken", "headlamp", "radio", "radio2", "walkie", "detector_anomaly", "detector_geiger", "detector_radio", "device_flashlight", "detector_simple", "cooking", "kerosene", "swiss_knife" },
+    
+    module_base_levels = { ["zaton"]=true, ["l10_limansk"]=true, ["jupiter"]=true, ["l11_pripyat"]=true, ["l09_deadcity"]=true },
+    module_up_levels = { ["pripyat"]=true, ["l10_radar"]=true, ["l12_stancia"]=true, ["l12_stancia_2"]=true, ["l13_generators"]=true, ["l10u_bunker"]=true, ["labx8"]=true }
+}
+
+function LootTables.get_tier(level_name) return LootTables.world_level_tier[level_name] or 1 end
+function LootTables.pick(list) return (list and #list > 0) and list[math.random(#list)] or nil end
+
+-- ============================================================
+-- MODULE 3: State Management (Persistence & Runtime)
+-- ============================================================
+local State = {
+    is_inited = false,
+    world_itm_info = {},   -- Статические данные спавнов
+    point_state = {},      -- Состояние конечного автомата
+    world_itm_on = {},     -- object_id -> point_name
+    world_itm_num = {},    -- point_name -> uses/condition
+    limited_uses = {},
+    legacy_coords = nil
+}
+
+function State.ensure_point(name)
+    local state = State.point_state[name]
+    if not state then
+        state = { phase = Config.Phases.INITIAL_READY, guaranteed_used = false, guaranteed_section = nil, looted_time = nil, active_id = nil }
+        State.point_state[name] = state
+    end
+    if state.phase == nil then state.phase = Config.Phases.INITIAL_READY end
+    if state.guaranteed_used == nil then state.guaranteed_used = false end
+    return state
+end
+
+function State.make_time()
+    local y, m, d, h, min, sec, ms = game.get_game_time():get()
+    return { Y = y, M = m, D = d, h = h, m = min, s = sec, ms = ms or 0 }
+end
+
+function State.is_cooldown_finished(state)
+    if not state.looted_time then return true end
+    local lt = state.looted_time
+    local t = game.CTime()
+    t:set(lt.Y, lt.M, lt.D, lt.h, lt.m, lt.s, lt.ms or 0)
+    return game.get_game_time():diffSec(t) >= Config.respawn_time_sec
+end
+
+-- ============================================================
+-- MODULE 4: Guarantee Manager (Fixes the duplicate bug)
+-- ============================================================
+local GuaranteeManager = {}
+
+function GuaranteeManager.sort_points(points)
+    local prio = { ammo = 1, misc = 2, medical = 3, food = 4, drink = 5, kit = 6 }
+    table.sort(points, function(a, b)
+        local ia, ib = State.world_itm_info[a], State.world_itm_info[b]
+        local ka = (ia.orig_typ == "kit") and 0 or 1
+        local kb = (ib.orig_typ == "kit") and 0 or 1
+        if ka ~= kb then return ka < kb end
+        local pa, pb = prio[ia.orig_typ] or 99, prio[ib.orig_typ] or 99
+        if pa == pb then return a < b end
+        return pa < pb
+    end)
+end
+
+function GuaranteeManager.assign()
+   
+end
+
+-- ============================================================
+-- MODULE 5: Spawner Logic
+-- ============================================================
+local Spawner = {}
+
+function Spawner.select_section(name, info, state)
+    -- Игнорируем гаранты, даже если они остались в старом сохранении.
+    if state.phase ~= Config.Phases.INITIAL_READY and state.phase ~= Config.Phases.RESPAWN_READY then
+        return nil
+    end
+
+    -- Обычный спавн (только медикаменты, расходники и хлам)
+    local tier = LootTables.get_tier(info.level)
+    local sec
+    if info.orig_typ == "medical" then
+        sec = LootTables.pick(LootTables.medical_by_tier[tier] or LootTables.medical_by_tier[1])
+    else
+        sec = LootTables.pick(LootTables.consumable_by_tier[tier] or LootTables.consumable_by_tier[1])
+        if math.random(1, 100) <= 15 then
+            sec = LootTables.pick(LootTables.junk_items_list) or sec
+        end
+    end
+    return sec
+end
+
+function Spawner.create_item(name, info, state, section)
+    if not section or not ini_sys:section_exist(section) then return false end
+
+    local pos = vector():set(info.x, info.y, info.z)
+    local se_obj = alife_create_item(section, { pos, info.lvl_id, info.gm_id })
+    if not se_obj then return false end
+
+    State.world_itm_on[se_obj.id] = name
+    state.active_id = se_obj.id
+
+    -- Всегда переводим точку в режим обычного лута, так как гарантов больше нет
+    if state.phase == Config.Phases.INITIAL_READY or state.phase == Config.Phases.RESPAWN_READY then
+        state.phase = Config.Phases.ACTIVE_RANDOM
+    end
+
+    -- Конфигурация состояния (патроны, состояние предмета)
+    if State.limited_uses[section] then
+        State.world_itm_num[name] = math.random(State.limited_uses[section][1], State.limited_uses[section][2])
+    elseif utils_item.is_degradable(nil, section) then
+        State.world_itm_num[name] = IsItem("part", section) and random_choice(0.5, 0.75, 1) or (math.random(30, 70) / 100)
+    else
+        State.world_itm_num[name] = nil
+    end
+
+    print_debug("[%s] Спавн предмета: %s", name, section)
+    return true
+end
+
+function Spawner.populate_level()
+    local cur_lvl = level.name()
+    for name, info in pairs(State.world_itm_info) do
+        if info.level == cur_lvl then
+            local state = State.ensure_point(name)
+            
+            -- Проверка окончания КД
+            if state.phase == Config.Phases.COOLDOWN then
+                if State.is_cooldown_finished(state) then
+                    -- Бросаем кубик (20% шанс)
+                    if math.random(1, 100) <= (Config.respawn_chance or 20) then
+                        state.looted_time = nil
+                        state.phase = Config.Phases.RESPAWN_READY
+                        print_debug("[%s] Кулдаун завершен: УСПЕХ (%d%%). Точка готова к спавну.", name, Config.respawn_chance)
+                    else
+                        -- Не повезло: перезапускаем 3-дневный таймер КД
+                        state.looted_time = State.make_time()
+                        print_debug("[%s] Кулдаун завершен: НЕУДАЧА (%d%%). Перезапуск КД на следующий цикл.", name, Config.respawn_chance)
+                    end
+                end
+            end
+
+            -- Спавн предмета (для первички или успешного респавна)
+            if state.phase == Config.Phases.INITIAL_READY or state.phase == Config.Phases.RESPAWN_READY then
+                local section = Spawner.select_section(name, info, state)
+                if section then Spawner.create_item(name, info, state, section) end
+            end
+        end
+    end
+end
+-- ============================================================
+-- MODULE 6: Core Manager & Callbacks
+-- ============================================================
+local Manager = {}
+
+function Manager.parse_config()
+    local ini = ini_file("items\\settings\\dynamic_item_spawn.ltx")
+    for i = 0, (ini:line_count("levels") or 0) - 1 do
+        local _, id, _ = ini:r_line_ex("levels", i, "", "")
+        for ii = 0, (ini:line_count(id) or 0) - 1 do
+            local _, name, info = ini:r_line_ex(id, ii, "", "")
+            local t = str_explode(info, ",")
+            if #t == 6 and t[1] ~= "NA" then
+                State.world_itm_info[name] = {
+                    typ = "kit", orig_typ = t[1], level = id,
+                    orig_x = tonumber(t[2]), orig_y = tonumber(t[3]), orig_z = tonumber(t[4]),
+                    x = tonumber(t[2]), y = tonumber(t[3]), z = tonumber(t[4]),
+                    lvl_id = tonumber(t[5]), gm_id = tonumber(t[6])
+                }
+                State.ensure_point(name)
+            end
+        end
+    end
+    for i = 0, (ini:line_count("possible_uses") or 0) - 1 do
+        local _, id, val = ini:r_line_ex("possible_uses", i, "", "")
+        local t = str_explode(val, ",")
+        State.limited_uses[id] = { tonumber(t[1]) or 1, tonumber(t[2]) or 1 }
+    end
+end
+
+function Manager.init()
+    if State.is_inited then return end
+    State.is_inited = true
+
+    Manager.parse_config()
+    
+    -- Восстанавливаем координаты из сейва, если есть
+    if State.legacy_coords then
+        for name, c in pairs(State.legacy_coords) do
+            if State.world_itm_info[name] then
+                State.world_itm_info[name].x = c.x
+                State.world_itm_info[name].y = c.y
+                State.world_itm_info[name].z = c.z
+            end
+        end
+    end
+
+    -- Распределяем гаранты (безопасно, без дубликатов благодаря новой проверке)
+    GuaranteeManager.assign()
+
+    -- Восстанавливаем связи активных предметов
+    for name, st in pairs(State.point_state) do st.active_id = nil end
+    for obj_id, name in pairs(State.world_itm_on) do
+        local st = State.point_state[name]
+        if st then st.active_id = obj_id end
+    end
+end
+
+function actor_on_first_update()
+    Manager.init()
+    Spawner.populate_level()
+end
+
+function actor_on_item_take(obj)
+    if not obj then return end
+    local id = obj:id()
+    local name = State.world_itm_on[id]
+    if not name then return end
+
+    local state = State.point_state[name]
+    local section = obj:section()
+
+    state.looted_time = State.make_time()
+    state.phase = Config.Phases.COOLDOWN
+    state.active_id = nil
+    State.world_itm_on[id] = nil
+
+    local num = State.world_itm_num[name]
+    if num then
+        if State.limited_uses[section] then alife_process_item(section, id, { uses = num })
+        elseif utils_item.is_degradable(nil, section) then alife_process_item(section, id, { cond = num }) end
+        State.world_itm_num[name] = nil
+    end
+
+    itms_manager.send_itm_msg(section)
+    print_debug("Залутан %s. Точка ушла в КД.", section)
+end
+
+function save_state(m_data)
+    m_data.dyn_loot_state_version = 2
+    m_data.dyn_loot_point_state = State.point_state
+    m_data.dyn_loot_world_itm_on = State.world_itm_on
+    m_data.dyn_loot_world_itm_num = State.world_itm_num
+    
+    local coords = {}
+    for name, info in pairs(State.world_itm_info) do
+        coords[name] = { x = info.x, y = info.y, z = info.z }
+    end
+    m_data.dyn_loot_coords = coords
+end
+
+function load_state(m_data)
+    State.point_state = m_data.dyn_loot_point_state or {}
+    State.world_itm_on = m_data.dyn_loot_world_itm_on or m_data.world_itm_on or {}
+    State.world_itm_num = m_data.dyn_loot_world_itm_num or m_data.world_itm_num or {}
+    State.legacy_coords = m_data.dyn_loot_coords or m_data.world_itm_coords
+    
+    if State.is_inited then Manager.init() end
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
+
+-- ============================================================
+-- Экспорт функций для совместимости с xr_gather_items.script
+-- ============================================================
+function is_world_item(id)
+    return State.world_itm_on[id] ~= nil
+end
+
+function get_item_nums(name)
+    return State.world_itm_num[name]
+end

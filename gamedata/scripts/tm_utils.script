@@ -1,0 +1,34 @@
+-- =========================================================================
+-- tm_utils.script
+-- Ответственность: Вспомогательные проверки, геометрия карт, дебаг-функции
+-- =========================================================================
+
+function box_in_same_map(id)
+    local obj1 = alife():actor()
+    local obj2 = alife_object(id)
+    -- Используем simulation_objects для проверки соседних уровней
+    return simulation_objects.is_on_the_nearby_level(obj1, obj2)
+end
+
+function box_in_valid_map(id)
+    local se_stash = alife_object(id)
+    local lvl = se_stash and alife():level_name(game_graph():vertex(se_stash.m_game_vertex_id):level_id())
+    
+    -- Обращаемся к таблице blacklisted_maps из конфигурационного модуля
+    return (tm_config.blacklisted_maps[lvl] ~= true)
+end
+
+function simulate_stash_creation(num) 
+    -- Функция для дебага
+    printf("--------- Create Stash: ")
+    for i=1,num do
+        printf("----------------------------------------------------------")
+        -- Вызываем функцию спавна из модуля tm_spawner
+        tm_spawner.set_random_stash(nil, nil, nil, i, true)
+    end
+    
+    printf("--------- Items count: ")
+    for k,v in utils_data.pairsByKeys(tm_config.dbg_items) do
+        printf(k .. " := " .. v)
+    end
+end

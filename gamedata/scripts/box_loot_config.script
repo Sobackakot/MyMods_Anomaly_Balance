@@ -1,0 +1,54 @@
+-- ==============================================================================================
+-- ФАЙЛ: box_loot_config.script
+-- ОПИСАНИЕ: Глобальные настройки спавна лута из разбиваемых ящиков
+-- ==============================================================================================
+
+-- Шансы выпадения (в процентах от 1 до 100)
+junk_spawn_chance = 10     -- Шанс выпадения хлама вместо патронов
+detail_spawn_chance = 25   -- Шанс выпадения детали для брони
+ammo_count_range = {5, 15} -- Минимальное и максимальное количество патронов в пачке
+
+-- Привязка локаций к тирам сложности (1 - Юг, 6 - Север/ЧАЭС)
+world_level_tier = {
+    l01_escape = 1, k01_darkscape = 1, y04_pole = 1, k00_marsh = 1,
+    l02_garbage = 1, l03_agroprom = 1, l04_darkvalley = 1, l03u_agr_underground = 1, l04u_labx18 = 1,
+    
+    k02_trucks_cemetery = 2, l05_bar = 2, l06_rostok = 2, l09_deadcity = 2, l08_yantar = 2, l08u_brainlab = 2,
+    
+    l07_military = 3, l10_red_forest = 3, l10_limansk = 3, l10_radar = 3, l10u_bunker = 3,
+    
+    zaton = 4, jupiter = 4, jupiter_underground = 4,
+    
+    pripyat = 5, l11_pripyat = 5, l11_hospital = 5, labx8 = 5,
+    
+    l12_stancia = 6, l12_stancia_2 = 6, l13_generators = 6, l12u_sarcofag = 6, l12u_control_monolith = 6,
+}
+
+-- Распределение деталей брони по тирам
+parts_by_tier = {
+    [1] = {18, 19, 20},     -- Самые простые (подкладки)
+    [2] = {14, 15, 16, 17},
+    [3] = {10, 11, 12, 13},
+    [4] = {6, 7, 8, 9},     -- Кевлар
+    [5] = {3, 4, 5},
+    [6] = {1, 2},           -- Эндгейм детали
+}
+
+-- Пул предметов хлама для крафта
+junk_pool = {
+    "broken_detector", "flashlight_broken", "headlamp", "radio", "radio2", "walkie",
+    "detector_anomaly", "detector_geiger", "detector_radio", "device_flashlight",
+    "detector_simple", "cooking", "kerosene", "swiss_knife", "tarpaulin",
+    "hammer_tool", "wpn_knife", "ramrod_tool", "file_tool", "itm_sleepbag"
+}
+
+-- Распределение базовых калибров патронов по тирам
+-- Скрипт сам добавит к ним приставку _bad при спавне
+ammo_by_tier = {
+    [1] = {"ammo_9x18_fmj", "ammo_9x19_fmj", "ammo_12x70_buck"},
+    [2] = {"ammo_12x76_zhekan", "ammo_11.43x23_fmj", "ammo_5.45x39_fmj"},
+    [3] = {"ammo_5.45x39_ap", "ammo_5.56x45_fmj", "ammo_9x39_pab9", "ammo_357_hp_mag"},
+    [4] = {"ammo_5.56x45_ap", "ammo_9x39_ap", "ammo_7.62x54_7h1", "ammo_7.62x51_fmj"},
+    [5] = {"ammo_7.62x54_7h14", "ammo_7.62x51_ap", "ammo_12.7x55_fmj", "ammo_pkm_100"},
+    [6] = {"ammo_12.7x55_ap", "ammo_gauss", "ammo_m209", "ammo_vog-25"}
+}

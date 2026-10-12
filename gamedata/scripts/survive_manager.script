@@ -1,0 +1,20 @@
+-- Перехват события "перед смертью"
+function on_actor_before_death(flags)
+    -- 1. Отменяем фатальный урон / смерть в движке
+    flags.ret_value = false
+
+    -- 2. Мгновенно подлечиваем актора, чтобы он не ушел в бесконечный цикл смерти
+    db.actor.health = 0.2
+    db.actor.power = 1.0
+
+    -- 3. Выводим сообщение в КПК о том, что перехват сработал
+    local test_msg = "ПЕРЕХВАТ СМЕРТИ СРАБОТАЛ!\nРеинкарнация запускается..."
+    news_manager.send_tip(db.actor, test_msg, 0, "default", 7000)
+
+    printf("~ REINCARNATION SYSTEM: Actor death intercepted successfully!")
+end
+
+-- Регистрация коллбэка при старте игры
+function on_game_start()
+    RegisterScriptCallback("actor_on_before_death", on_actor_before_death)
+end
