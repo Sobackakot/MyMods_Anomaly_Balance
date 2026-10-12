@@ -1,20 +1,195 @@
--- Перехват события "перед смертью"
-function on_actor_before_death(flags)
-    -- 1. Отменяем фатальный урон / смерть в движке
-    flags.ret_value = false
+--------------------------------------------------------------------------------
+-- SURVIVE MANAGER: Модульная система реинкарнации (SOLID Architecture)
+--------------------------------------------------------------------------------
 
-    -- 2. Мгновенно подлечиваем актора, чтобы он не ушел в бесконечный цикл смерти
-    db.actor.health = 0.2
-    db.actor.power = 1.0
+--------------------------------------------------------------------------------
+-- 1. КОНФИГУРАЦИЯ (Open/Closed Principle)
+--------------------------------------------------------------------------------
+local Config = {
+    spawn = {
+        level_name = "l01_escape",
+        pos        = vector():set(-211.4, -19.8, -136.5),
+        lvid       = 11575,
+        gvid       = 58,
+        angle      = vector():set(0, 0, 0)
+    },
+    unconscious_hours = 3,
+    unconscious_delay = 3.5
+}
 
-    -- 3. Выводим сообщение в КПК о том, что перехват сработал
-    local test_msg = "ПЕРЕХВАТ СМЕРТИ СРАБОТАЛ!\nРеинкарнация запускается..."
-    news_manager.send_tip(db.actor, test_msg, 0, "default", 7000)
+--------------------------------------------------------------------------------
+-- 2. СЕРВИС УВЕДОМЛЕНИЙ (Single Responsibility)
+--------------------------------------------------------------------------------
+local NotificationService = {}
 
-    printf("~ REINCARNATION SYSTEM: Actor death intercepted successfully!")
+function NotificationService.send_death_notice()
+    news_manager.send_tip(db.actor, "СТАЛКЕР ПОГИБ!\nВы берете под управление нового бойца...", 0, "default", 7000)
 end
 
--- Регистрация коллбэка при старте игры
+function NotificationService.send_awakening_notice()
+    news_manager.send_tip(db.actor, "Вы пришли в себя...\nПрошло несколько часов. Вы в безопасности.", 0, "default", 7000)
+end
+
+--------------------------------------------------------------------------------
+-- 3. СЕРВИС СОСТОЯНИЯ ИГРОКА (Vitals & Bleeding Cleansing)
+--------------------------------------------------------------------------------
+local ActorStateService = {}
+
+function ActorStateService.reset_vitals()
+    if not db.actor then return end
+
+    -- Базовые движковые показатели
+    db.actor.health = 1.0
+    db.actor.power = 1.0
+    db.actor.radiation = 0.0
+
+    if db.actor.set_psy_health then
+        db.actor:set_psy_health(1.0)
+    end
+
+    -- Прямое движковое заживление ран
+    if db.actor.heal_wounds then
+        db.actor:heal_wounds(1.0)
+    end
+
+    -- Сброс депривации сна (из actor_status_sleep.script)[cite: 2]
+    if actor_status_sleep and actor_status_sleep.reset_sleep_deprivation then
+        actor_status_sleep.reset_sleep_deprivation()
+    end
+
+    -- Сброс голода, жажды и усталости
+    if actor_status_sleep then
+        if actor_status_sleep.thirst then actor_status_sleep.thirst = 0 end
+        if actor_status_sleep.hunger then actor_status_sleep.hunger = 0 end
+        if actor_status_sleep.sleep then actor_status_sleep.sleep = 0 end
+    end
+
+    -- Тотальная очистка залипших постэффектов (ID 8012 из medic_effects.script, ID 11 и паника)[cite: 4]
+    level.remove_pp_effector(8012)
+    level.remove_pp_effector(11)
+    level.remove_pp_effector(2012)
+    level.remove_pp_effector(2013)
+    level.remove_pp_effector(2014)
+    level.remove_pp_effector(2015)
+    level.remove_cam_effector(1001)
+
+    for i = 1, 3000 do
+        level.remove_pp_effector(i)
+    end
+
+    printf("~ [ActorStateService] Vitals, bleeding and post-effects fully cleared.")
+end
+
+--------------------------------------------------------------------------------
+-- 4. СЕРВИС НАВИГАЦИИ И ТЕЛЕПОРТАЦИИ
+--------------------------------------------------------------------------------
+local NavigationService = {}
+
+local function teleport_local(pos)
+    db.actor:set_actor_position(pos)
+end
+
+local function change_level_global(gvid, lvid, pos, angle)
+    local p = net_packet()
+    p:w_begin(13)
+    p:w_u16(gvid)
+    p:w_u32(lvid)
+    p:w_vec3(pos)
+    p:w_vec3(angle)
+    level.send(p, true)
+end
+
+function NavigationService.transport_to_spawn()
+    local current_gvid = db.actor:game_vertex_id()
+    local current_level_id = game_graph():vertex(current_gvid):level_id()
+    local current_level_name = alife():level_name(current_level_id)
+
+    if current_level_name == Config.spawn.level_name then
+        teleport_local(Config.spawn.pos)
+    else
+        change_level_global(Config.spawn.gvid, Config.spawn.lvid, Config.spawn.pos, Config.spawn.angle)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- 5. СЕРВИС КИНЕМАТОГРАФИЧНОГО СНА (Blackout / Sleep)
+--------------------------------------------------------------------------------
+local CinematicService = {}
+
+function CinematicService.trigger_sleep(hours)
+    -- Используем ванильный механизм принудительного сна из ui_sleep_dialog.script[cite: 1]
+    if ui_sleep_dialog and ui_sleep_dialog.sleep_forced then
+        ui_sleep_dialog.sleep_forced(hours)
+    else
+        level.add_pp_effector("surge_fade.ppe", 11, false)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- 6. ОРКЕСТРАТОР РЕИНКАРНАЦИИ (Facade Pattern)
+--------------------------------------------------------------------------------
+local ReincarnationManager = {
+    is_dying = false
+}
+
+function ReincarnationManager.intercept_death(amount, flags)
+    if flags and type(flags) == "table" then
+        flags.ret_value = false
+    end
+
+    if ReincarnationManager.is_dying or db.actor:has_info("actor_is_sleeping") then
+        return
+    end
+
+    ReincarnationManager.is_dying = true
+
+    local ok, err = pcall(function()
+        -- Защита от гибели во время затухания
+        db.actor.health = 1.0
+
+        -- Уведомление игрока
+        NotificationService.send_death_notice()
+
+        -- Запуск сна и затухания экрана
+        CinematicService.trigger_sleep(Config.unconscious_hours)
+
+        -- Защитный замок здоровья на время перемотки времени движком
+        local lock_timer = 0
+        CreateTimeEvent(0, "survive_manager_health_lock", 0.5, function()
+            if db.actor then
+                db.actor.health = 1.0
+            end
+            lock_timer = lock_timer + 1
+            return lock_timer >= 7
+        end)
+
+        -- Основной таймер реинкарнации (выполняется после завершения сна)
+        CreateTimeEvent(0, "survive_manager_reincarnate", Config.unconscious_delay, function()
+            NavigationService.transport_to_spawn()
+            ActorStateService.reset_vitals()
+            NotificationService.send_awakening_notice()
+
+            ReincarnationManager.is_dying = false
+            return true
+        end)
+    end)
+
+    if not ok then
+        ReincarnationManager.is_dying = false
+        printe("! [Survive Manager] Fatal error in intercept_death: %s", tostring(err))
+    end
+end
+
+function reset_sleep_deprivation()
+    if not feature_state then return end
+    last_sleep = 0
+    level.remove_pp_effector(39568)
+end
+
+--------------------------------------------------------------------------------
+-- 7. ТОЧКА ВХОДА
+--------------------------------------------------------------------------------
 function on_game_start()
-    RegisterScriptCallback("actor_on_before_death", on_actor_before_death)
+    RegisterScriptCallback("actor_on_before_death", ReincarnationManager.intercept_death)
+    printf("~ [Survive Manager] Clean SOLID Reincarnation System initialized.")
 end
