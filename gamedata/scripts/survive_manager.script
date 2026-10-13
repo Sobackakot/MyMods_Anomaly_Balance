@@ -1,54 +1,75 @@
 --------------------------------------------------------------------------------
--- SURVIVE MANAGER: Модульная система реинкарнации (SOLID Architecture)
--- Срежиссировано под полевое восстановление и отложенные сообщения КПК
+-- SURVIVE MANAGER: Модульная мультихаб-система реинкарнации (SOLID Architecture)
+-- С поддержкой кросс-левельного сохранения состояния через Anomaly save_var
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- 1. КОНФИГУРАЦИЯ (Open/Closed Principle)
+-- 1. РЕЕСТР УБЕЖИЩ И ХАБОВ (Легко масштабируется под Бар, Скадовск, Янов и т.д.)
 --------------------------------------------------------------------------------
-local Config = {
-    spawn = {
-        level_name = "l01_escape",
-        pos        = vector():set(-211.4, -19.8, -136.5),
-        lvid       = 11575,
-        gvid       = 58,
-        angle      = vector():set(0, 0, 0)
+local HubRegistry = {
+    cordon_sidorovich = {
+        level_name     = "l01_escape",
+        pos            = vector():set(-212.74, -23.19, -122.76), -- Внутри бункера
+        lvid           = 40973,
+        gvid           = 453,
+        angle          = vector():set(0, 0, 0),
+        sender_name_id = "st_sidorovich",        -- Ключ локализации имени
+        sender_icon    = "ui_iconsNpc_trader",      -- Иконка Сидоровича
+        message_key    = "st_my_sidorovich_msg",    -- Текст сообщения торговца
+        rescue_msg_key = "st_sleep_stalker_msg"     -- Текст сообщения о спасении
     },
-    unconscious_hours = 3,
-    unconscious_delay = 3.5
+    
+    -- Пример для будущих хабов (достаточно раскомментировать и заполнить координаты):
+    -- bar_dolg = {
+    --     level_name     = "l05_bar",
+    --     pos            = vector():set(...),
+    --     lvid           = ...,
+    --     gvid           = ...,
+    --     angle          = vector():set(0, 0, 0),
+    --     sender_name_id = "st_barman",
+    --     sender_icon    = "ui_inGame2_barman",
+    --     message_key    = "st_barman_msg",
+    --     rescue_msg_key = "st_sleep_stalker_msg"
+    -- }
 }
 
+-- Функция выбора целевого хаба (сюда в будущем можно добавить логику поиска ближайшего)
+local function select_spawn_hub()
+    return HubRegistry.cordon_sidorovich
+end
+
 --------------------------------------------------------------------------------
--- 2. СЕРВИС УВЕДОМЛЕНИЙ (С отложенной отправкой по таймерам)
+-- 2. СЕРВИС УВЕДОМЛЕНИЙ (Динамический, зависит от хаба)
 --------------------------------------------------------------------------------
 local NotificationService = {}
 
-function NotificationService.send_awakening_notices()
-  -- 1. Сообщение о спасении сталкерами (через 6 секунд после пробуждения)
+function NotificationService.send_awakening_notices(hub)
+    hub = hub or HubRegistry.cordon_sidorovich
+
+    -- 1. Сообщение о спасении сталкерами (через 6 секунд после пробуждения)
     CreateTimeEvent(0, "survive_msg_rescue_delay", 6.0, function()
-        local ms_sleep = game.translate_string("st_sleep_stalker_msg")
+        local rescue_text = game.translate_string(hub.rescue_msg_key)
         if news_manager then
-            news_manager.send_tip(db.actor, ms_sleep, 0, "default", 7000)
+            news_manager.send_tip(db.actor, rescue_text, 0, "default", 7000)
         end
         return true
     end)
 
-    -- 2. Сообщение от Сидоровича (через 9 секунд)
-     CreateTimeEvent(0, "survive_msg_sidorov_delay", 9.0, function()
-        local ms_sidorov = game.translate_string("st_my_sidorovich_msg")
+    -- 2. Сообщение от лидера/торговца хаба (через 9 секунд)
+    CreateTimeEvent(0, "survive_msg_hub_delay", 9.0, function()
+        local hub_text = game.translate_string(hub.message_key)
+        local sender_title = game.translate_string(hub.sender_name_id)
         
         if db.actor then
-            -- Используем прямой движковый метод
             db.actor:give_game_news(
-                game.translate_string("st_sidorovich"),  -- Заголовок: "Сидорович"
-                ms_sidorov,                             -- Текст сообщения
-                "ui_iconsNpc_trader",                   -- ТОЧНОЕ ИМЯ ТЕКСТУРЫ ИЗ ТВОЕГО NEWS_MANAGER!
-                0,                                      -- Задержка в мс
-                7000,                                   -- Время показа (7 секунд)
-                0                                       -- Тип сообщения
+                sender_title,
+                hub_text,
+                hub.sender_icon,
+                0,
+                14000,
+                0
             )
             
-            -- Звук прихода сообщения в КПК
             local snd = sound_object([[device\pda\pda_tip]])
             if snd then
                 snd:play(db.actor, 0, sound_object.s2d)
@@ -57,15 +78,15 @@ function NotificationService.send_awakening_notices()
         return true
     end)
 end
+
 --------------------------------------------------------------------------------
--- 3. СЕРВИС СОСТОЯНИЯ ИГРОКА (Полевая стабилизация)
+-- 3. СЕРВИС СОСТОЯНИЯ ИГРОКА (Полевая стабилизация и скрытый мед-кит)
 --------------------------------------------------------------------------------
 local ActorStateService = {}
 
 function ActorStateService.reset_vitals()
     if not db.actor then return end
 
-    -- Базовые движковые показатели
     db.actor.health = 1.0
     db.actor.power = 1.0
     db.actor.radiation = 0.0
@@ -74,7 +95,7 @@ function ActorStateService.reset_vitals()
         db.actor:set_psy_health(1.0)
     end
 
-    -- Выдача и скрытое применение элитного полевого набора для старта метаболизма
+    -- Выдача и скрытое применение элитного полевого набора для запуска метаболизма
     local se_item = alife():create("survival_kit", db.actor:position(), db.actor:level_vertex_id(), db.actor:game_vertex_id(), db.actor:id())
     if se_item then
         CreateTimeEvent(0, "survive_apply_kit", 0, function()
@@ -87,19 +108,16 @@ function ActorStateService.reset_vitals()
         end)
     end
 
-    -- Сброс депривации сна (из actor_status_sleep.script)
     if actor_status_sleep and actor_status_sleep.reset_sleep_deprivation then
         actor_status_sleep.reset_sleep_deprivation()
     end
 
-    -- Сброс голода, жажды и усталости
     if actor_status_sleep then
         if actor_status_sleep.thirst then actor_status_sleep.thirst = 0 end
         if actor_status_sleep.hunger then actor_status_sleep.hunger = 0 end
         if actor_status_sleep.sleep then actor_status_sleep.sleep = 0 end
     end
 
-    -- Первичная зачистка резких постэффектов боли
     for i = 1, 2000 do
         level.remove_pp_effector(i)
     end
@@ -112,34 +130,26 @@ end
 --------------------------------------------------------------------------------
 local NavigationService = {}
 
-local function teleport_local(pos)
-    db.actor:set_actor_position(pos)
-end
+function NavigationService.transport_to(hub)
+    if not db.actor or not hub then return end
 
-local function change_level_global(gvid, lvid, pos, angle)
-    local p = net_packet()
-    p:w_begin(13)
-    p:w_u16(gvid)
-    p:w_u32(lvid)
-    p:w_vec3(pos)
-    p:w_vec3(angle)
-    level.send(p, true)
-end
-
-function NavigationService.transport_to_spawn()
     local current_gvid = db.actor:game_vertex_id()
     local current_level_id = game_graph():vertex(current_gvid):level_id()
     local current_level_name = alife():level_name(current_level_id)
+    local target_pos = vector():set(hub.pos.x, hub.pos.y, hub.pos.z)
 
-    if current_level_name == Config.spawn.level_name then
-        teleport_local(Config.spawn.pos)
+    if current_level_name == hub.level_name then
+        db.actor:set_actor_position(target_pos)
     else
-        change_level_global(Config.spawn.gvid, Config.spawn.lvid, Config.spawn.pos, Config.spawn.angle)
+        if ChangeLevel then
+            local dir = hub.angle or vector():set(0, 0, 0)
+            ChangeLevel(target_pos, hub.lvid, hub.gvid, dir)
+        end
     end
 end
 
 --------------------------------------------------------------------------------
--- 5. СЕРВИС КИНЕМАТОГРАФИЧНОГО СНА (Blackout / Sleep)
+-- 5. СЕРВИС КИНЕМАТОГРАФИЧНОГО СНА (Blackout)
 --------------------------------------------------------------------------------
 local CinematicService = {}
 
@@ -152,7 +162,7 @@ function CinematicService.trigger_sleep(hours)
 end
 
 --------------------------------------------------------------------------------
--- 6. ОРКЕСТРАТОР РЕИНКАРНАЦИИ (Facade Pattern)
+-- 6. ОРКЕСТРАТОР РЕИНКАРНАЦИИ И ПЕРСИСТЕНТНЫЙ ХЕНДЛЕР (Facade Pattern)
 --------------------------------------------------------------------------------
 local ReincarnationManager = {
     is_dying = false
@@ -170,15 +180,13 @@ function ReincarnationManager.intercept_death(amount, flags)
     ReincarnationManager.is_dying = true
 
     local ok, err = pcall(function()
-        -- 1. Срочно фиксируем здоровье на максимум с самого первого кадра смерти
         if db.actor then
             db.actor.health = 1.0
         end
 
-        -- Запуск затухания и сна
-        CinematicService.trigger_sleep(Config.unconscious_hours)
+        CinematicService.trigger_sleep(3)
 
-        -- 2. ЖЕЛЕЗОБЕТОННЫЙ ЗАМОК ЗДОРОВЬЯ НА 20 СЕКУНД
+        -- Защитный замок здоровья на 20 секунд
         local lock_ticks = 0
         CreateTimeEvent(0, "survive_iron_health_lock", 0.05, function()
             if db.actor then
@@ -188,13 +196,22 @@ function ReincarnationManager.intercept_death(amount, flags)
             return lock_ticks >= 400
         end)
 
-        -- Основной таймер реинкарнации (телепорт и применение набора на базе)
-        CreateTimeEvent(0, "survive_manager_reincarnate", Config.unconscious_delay, function()
-            NavigationService.transport_to_spawn()
-            ActorStateService.reset_vitals()
+        -- Выбираем хаб и сохраняем его ключ в персистентное хранилище движка (переживает смену уровня!)
+        local target_hub = select_spawn_hub()
+        save_var(db.actor, "survive_pending_hub_key", "cordon_sidorovich")
+
+        -- Таймер телепортации по истечении затухания
+        CreateTimeEvent(0, "survive_manager_reincarnate", 3.5, function()
+            NavigationService.transport_to(target_hub)
             
-            -- Запуск отложенных сообщений после пробуждения
-            NotificationService.send_awakening_notices()
+            -- Если телепорт локальный (на той же карте), применяем виталы сразу и чистим вар
+            local current_gvid = db.actor:game_vertex_id()
+            local current_level_name = alife():level_name(game_graph():vertex(current_gvid):level_id())
+            if current_level_name == target_hub.level_name then
+                ActorStateService.reset_vitals()
+                NotificationService.send_awakening_notices(target_hub)
+                save_var(db.actor, "survive_pending_hub_key", nil)
+            end
 
             ReincarnationManager.is_dying = false
             return true
@@ -207,10 +224,22 @@ function ReincarnationManager.intercept_death(amount, flags)
     end
 end
 
-function reset_sleep_deprivation()
-    if not feature_state then return end
-    last_sleep = 0
-    level.remove_pp_effector(39568)
+-- Срабатывает при появлении игрока на новом уровне (после завершения загрузки)
+function ReincarnationManager.actor_on_first_update()
+    local pending_key = load_var(db.actor, "survive_pending_hub_key")
+    if pending_key and HubRegistry[pending_key] then
+        local hub = HubRegistry[pending_key]
+        
+        -- Очищаем ключ сразу, чтобы триггер сработал ровно один раз
+        save_var(db.actor, "survive_pending_hub_key", nil)
+
+        -- Небольшая пауза (0.5 сек) для стабильности физики и коллизий после загрузочного экрана
+        CreateTimeEvent(0, "survive_cross_level_init", 0.5, function()
+            ActorStateService.reset_vitals()
+            NotificationService.send_awakening_notices(hub)
+            return true
+        end)
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -218,5 +247,6 @@ end
 --------------------------------------------------------------------------------
 function on_game_start()
     RegisterScriptCallback("actor_on_before_death", ReincarnationManager.intercept_death)
-    printf("~ [Survive Manager] Ironclad Reincarnation System initialized.")
+    RegisterScriptCallback("actor_on_first_update", ReincarnationManager.actor_on_first_update)
+    printf("~ [Survive Manager] Persistent Multi-Hub Reincarnation System initialized.")
 end
