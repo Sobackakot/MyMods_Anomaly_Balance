@@ -262,14 +262,18 @@ function relocate_money(actor, type, amount)
 		db.actor:give_game_news(news_caption, news_text, news_ico, 0, 3000)
 	end
 end
-
+ 
 function send_stash_navodka(loc_name, stash_title)
-	send_treasure(0)
-	local msg_text = string.format("Navodka poluchena!\nLokalatsiya: %s\n: %s ", tostring(loc_name), tostring(stash_title))
-	send_tip(db.actor, msg_text, 0, "treasure", 10000)
+    send_treasure(0)
+    -- Загружаем шаблон из XML по нашему ID и форматируем переменные
+    local template = game.translate_string("st_stash_navodka_msg")
+    local msg_text = string.format(template, tostring(loc_name), tostring(stash_title))
+    send_tip(db.actor, msg_text, 0, "treasure", 10000)
 end
 
 function send_stash_fail_report(current_green, fails)
-	local status_msg = string.format("Otchet o zadanii:\nShans vipadeniya taynika: %d%%\nNeudachnyh popytok: %d ", math.floor(current_green), fails)
-	send_tip(db.actor, status_msg, 0, "item", 7000)
+    -- Загружаем шаблон из XML по нашему ID и форматируем переменные
+    local template = game.translate_string("st_stash_fail_report_msg")
+    local status_msg = string.format(template, math.floor(current_green), fails)
+    send_tip(db.actor, status_msg, 0, "item", 7000)
 end
